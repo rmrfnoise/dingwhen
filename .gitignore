@@ -1,0 +1,24 @@
+# Gradle
+.gradle/
+build/
+.kotlin/
+
+# 本机配置
+local.properties
+
+# IDE
+.idea/
+*.iml
+.DS_Store
+
+# 构建产物与过程资料（APK 走 GitHub Release，不进仓库）
+dist/
+
+# 签名文件，绝不入库
+keystore/
+keystore.properties
+*.jks
+*.keystore
+
+# 本地工具目录
+.workbuddy/

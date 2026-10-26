@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.DingWhen" parent="@android:style/Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@color/window_bg</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <!-- 系统时间/日期选择器沿用窗口主题，把默认的青色改成应用的墨色 -->
+        <item name="android:colorPrimary">#FF1A1B1F</item>
+        <item name="android:colorPrimaryDark">#FF1A1B1F</item>
+        <item name="android:colorAccent">#FF1A1B1F</item>
+    </style>
+</resources>
