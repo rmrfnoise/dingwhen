@@ -160,8 +160,6 @@ interface Strings {
     val defaultVoiceTitle: String
     val voicePickerTitle: String
     val voicePickerHint: String
-    val voiceGroupFemale: String
-    val voiceGroupMale: String
     val voiceScopeNote: String
     val speechEmotionTitle: String
     /** 设置页语气开关：和音色对称，只决定新建时预填什么 */
@@ -364,8 +362,6 @@ object Zh : Strings {
     override val defaultVoiceTitle = "新提醒的默认音色"
     override val voicePickerTitle = "选择音色"
     override val voicePickerHint = "点一下换声音"
-    override val voiceGroupFemale = "女声"
-    override val voiceGroupMale = "男声"
     override val voiceScopeNote = "只影响以后新建的提醒；已有提醒在各自的编辑页里改。"
     override val speechEmotionTitle = "语气"
     override val defaultEmotionTitle = "新提醒的默认语气"
@@ -587,8 +583,6 @@ object En : Strings {
     override val defaultVoiceTitle = "Default voice"
     override val voicePickerTitle = "Choose a voice"
     override val voicePickerHint = "Tap to switch"
-    override val voiceGroupFemale = "Female"
-    override val voiceGroupMale = "Male"
     override val voiceScopeNote =
         "Applies to new reminders only. Change an existing one in its editor."
     override val speechEmotionTitle = "Tone"

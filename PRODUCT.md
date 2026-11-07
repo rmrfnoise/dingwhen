@@ -47,7 +47,7 @@ android
 
 已确认的约束：
 
-- Android 原生：Kotlin + Jetpack Compose + Material 3；minSdk 26，compile/target SDK 35；当前版本 2.8（versionCode 19）。
+- Android 原生：Kotlin + Jetpack Compose + Material 3；minSdk 26，compile/target SDK 35；当前版本 3.1（versionCode 21）。
 - Release 开启 R8 与资源压缩，APK 约 4 MB。
 - Room 使用 `fallbackToDestructiveMigration` 且不写 Migration：单人自用，表结构变更允许丢旧数据。
 - 语音密钥只存本机 SharedPreferences，不进仓库。
