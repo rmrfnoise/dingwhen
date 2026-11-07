@@ -56,7 +56,7 @@ class SpeechSynthesizer(
         val text = speechTextOf(reminder)
 
         if (!config.enabled || !config.configured || text.isBlank()) {
-            persist(reminder, AudioState.NONE, null, null)
+            persist(reminder.id, AudioState.NONE, null, null)
             return@withContext
         }
 
@@ -64,30 +64,73 @@ class SpeechSynthesizer(
         val name = "${store.keyOf(text, config)}.mp3"
         val cached = store.file(name)
         if (cached != null) {
-            persist(reminder, AudioState.READY, cached.name, null)
+            if (stillCurrent(reminder, text)) {
+                persist(reminder.id, AudioState.READY, cached.name, null)
+            } else {
+                persist(reminder.id, AudioState.PENDING, null, null)
+            }
+            return@withContext
+        }
+
+        // 超限直接给明确错误，不发一次注定失败的请求
+        if (!SpeechLimits.isWithinLimit(text)) {
+            persist(reminder.id, AudioState.FAILED, null, DoubaoClient.ERR_TOO_LONG)
+            return@withContext
+        }
+
+        // 纯语种不匹配直接给明确错误，不发一次注定失败的请求
+        if (hardLanguageMismatch(text, config.voiceType)) {
+            persist(reminder.id, AudioState.FAILED, null, DoubaoClient.ERR_LANGUAGE)
             return@withContext
         }
 
         when (val result = DoubaoClient.synthesize(config, text)) {
             is SynthResult.Ok -> {
+                // 合成期间用户可能改了文字/音色/语气；旧快照写回去会覆盖新编辑
+                if (!stillCurrent(reminder, text)) {
+                    persist(reminder.id, AudioState.PENDING, null, null)
+                    return@withContext
+                }
                 val saved = store.write(name, result.audio)
                 if (saved != null) {
-                    persist(reminder, AudioState.READY, saved.name, null)
+                    persist(reminder.id, AudioState.READY, saved.name, null)
                 } else {
-                    persist(reminder, AudioState.PENDING, null, DoubaoClient.ERR_NETWORK)
+                    persist(reminder.id, AudioState.PENDING, null, DoubaoClient.ERR_NETWORK)
                 }
             }
 
             is SynthResult.Err -> {
+                if (!stillCurrent(reminder, text)) {
+                    persist(reminder.id, AudioState.PENDING, null, null)
+                    return@withContext
+                }
                 // 网络类失败留 PENDING 等下次冷启动重试；配置类失败标 FAILED，重试没意义
                 val state = if (result.reason == DoubaoClient.ERR_NETWORK) {
                     AudioState.PENDING
                 } else {
                     AudioState.FAILED
                 }
-                persist(reminder, state, null, result.reason)
+                persist(reminder.id, state, null, result.reason)
             }
         }
+    }
+
+    private fun hardLanguageMismatch(text: String, voiceId: String): Boolean {
+        val voice = VoiceCatalog.find(voiceId) ?: return false
+        return when (TextLanguageDetector.detect(text)) {
+            TextLanguage.ZH -> !voice.supportsChinese
+            TextLanguage.EN -> !voice.supportsEnglish
+            // 中英混合只提示、不拦：中文里夹一个 OK 不应该被一刀切
+            else -> false
+        }
+    }
+
+    private suspend fun stillCurrent(reminder: Reminder, text: String): Boolean {
+        val latest = dao.getById(reminder.id) ?: return false
+        return latest.voiceType == reminder.voiceType &&
+            latest.emotion == reminder.emotion &&
+            latest.emotionEnabled == reminder.emotionEnabled &&
+            speechTextOf(latest) == text
     }
 
     /** 冷启动时补做上次没合成的（多为离线时创建的提醒） */
@@ -113,12 +156,25 @@ class SpeechSynthesizer(
             // 每条按自己的音色算缓存键，否则改名后一律回落到默认音色的那份
             val config = configFor(reminder, base)
             val cached = store.file("${store.keyOf(text, config)}.mp3")
-            val state = if (cached != null) AudioState.READY else AudioState.PENDING
+            val tooLong = !SpeechLimits.isWithinLimit(text)
+            val wrongLanguage = hardLanguageMismatch(text, config.voiceType)
+
+            val state = when {
+                cached != null -> AudioState.READY
+                tooLong || wrongLanguage -> AudioState.FAILED
+                else -> AudioState.PENDING
+            }
+            val error = when {
+                cached != null -> null
+                tooLong -> DoubaoClient.ERR_TOO_LONG
+                wrongLanguage -> DoubaoClient.ERR_LANGUAGE
+                else -> null
+            }
             val file = cached?.name
-            if (reminder.audioState != state || reminder.audioFile != file) {
-                dao.update(
-                    reminder.copy(audioState = state, audioFile = file, audioError = null)
-                )
+            if (reminder.audioState != state || reminder.audioFile != file ||
+                reminder.audioError != error
+            ) {
+                dao.updateAudio(reminder.id, state, file, error)
                 queued++
             }
         }
@@ -139,6 +195,13 @@ class SpeechSynthesizer(
         if (text.isBlank()) {
             return@withContext PreviewResult(null, DoubaoClient.ERR_EMPTY, null)
         }
+        if (!SpeechLimits.isWithinLimit(text)) {
+            return@withContext PreviewResult(
+                null,
+                DoubaoClient.ERR_TOO_LONG,
+                "${SpeechLimits.charCount(text)}/${SpeechLimits.MAX_TEXT_CHARS} chars"
+            )
+        }
         val base = AppSettings.speechConfig()
         val withVoice = if (voiceType.isBlank() || voiceType == base.voiceType) {
             base
@@ -157,6 +220,10 @@ class SpeechSynthesizer(
         val name = "${store.keyOf(text, config)}.mp3"
         store.file(name)?.let { return@withContext PreviewResult(it, null, null) }
 
+        if (hardLanguageMismatch(text, config.voiceType)) {
+            return@withContext PreviewResult(null, DoubaoClient.ERR_LANGUAGE, null)
+        }
+
         when (val result = DoubaoClient.synthesize(config, text)) {
             is SynthResult.Ok -> PreviewResult(store.write(name, result.audio), null, null)
             is SynthResult.Err -> PreviewResult(null, result.reason, result.detail)
@@ -168,15 +235,16 @@ class SpeechSynthesizer(
         store.sweep(dao.getAll().mapNotNull { it.audioFile }.toSet())
     }
 
+    /**
+     * 只更新音频字段。合成可能持续数秒，期间用户改时间/内容/音色都不该被旧快照覆盖。
+     * 表结构不变，不需要升 Room 版本。
+     */
     private suspend fun persist(
-        reminder: Reminder,
+        reminderId: Long,
         state: AudioState,
         file: String?,
         error: String?
     ) {
-        if (reminder.audioState == state && reminder.audioFile == file && reminder.audioError == error) {
-            return
-        }
-        dao.update(reminder.copy(audioState = state, audioFile = file, audioError = error))
+        dao.updateAudio(reminderId, state, file, error)
     }
 }

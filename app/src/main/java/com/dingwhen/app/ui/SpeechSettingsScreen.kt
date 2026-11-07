@@ -72,8 +72,16 @@ fun SpeechSettingsScreen(
     val s = LocalStrings.current
 
     val stored by AppSettings.speech.collectAsState()
+    val aliases by AppSettings.voiceAliases.collectAsState()
     var config by remember { mutableStateOf(stored) }
     var showVoicePicker by remember { mutableStateOf(false) }
+    val en = s.lang == Lang.EN
+    val voice = VoiceCatalog.find(config.voiceType)
+    val voiceSummary = listOfNotNull(
+        AppSettings.voiceLabel(config.voiceType, en, aliases),
+        voice?.let { s.voiceLanguage(it.languages) },
+        voice?.let { if (en) it.descriptionEn else it.descriptionZh }
+    ).joinToString(" · ")
 
     val previewing by vm.previewing.collectAsState()
     val previewNote by vm.previewNote.collectAsState()
@@ -188,7 +196,7 @@ fun SpeechSettingsScreen(
                     Column {
                         DwRow(
                             title = s.defaultVoiceTitle,
-                            subtitle = VoiceCatalog.labelOf(config.voiceType, s.lang == Lang.EN),
+                            subtitle = voiceSummary.takeIf { it.isNotBlank() },
                             onClick = { showVoicePicker = true }
                         ) {
                             ActionPill(s.select) { showVoicePicker = true }

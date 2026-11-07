@@ -125,6 +125,16 @@ interface ReminderDao {
     @Update
     suspend fun update(reminder: Reminder)
 
+    /**
+     * 只写音频字段，避免合成结束后用旧快照覆盖用户在等待期间改的时间/内容/音色。
+     * 表结构不变，不需要升数据库版本。
+     */
+    @Query(
+        "UPDATE reminders SET audio_state = :state, audio_file = :file, audio_error = :error " +
+            "WHERE id = :id"
+    )
+    suspend fun updateAudio(id: Long, state: AudioState, file: String?, error: String?)
+
     @Delete
     suspend fun delete(reminder: Reminder)
 

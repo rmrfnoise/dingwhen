@@ -71,7 +71,10 @@ import com.dingwhen.app.i18n.LocalStrings
 import com.dingwhen.app.model.AudioState
 import com.dingwhen.app.model.Draft
 import com.dingwhen.app.model.RepeatType
+import com.dingwhen.app.speech.SpeechLimits
+import com.dingwhen.app.speech.TextLanguageDetector
 import com.dingwhen.app.speech.VoiceCatalog
+import com.dingwhen.app.speech.supports
 import com.dingwhen.app.ui.theme.LocalDwColors
 import java.time.DayOfWeek
 import java.time.Instant
@@ -83,6 +86,7 @@ import java.time.ZoneOffset
 fun EditorScreen(
     draft: Draft,
     audioState: AudioState,
+    audioError: String?,
     previewing: Boolean,
     previewNote: String?,
     onUpdate: ((Draft) -> Draft) -> Unit,
@@ -95,7 +99,22 @@ fun EditorScreen(
     val extras = LocalDwColors.current
     val s = LocalStrings.current
     val speechConfig by AppSettings.speech.collectAsState()
+    val aliases by AppSettings.voiceAliases.collectAsState()
     val problems = draft.problems()
+    val en = s.lang == Lang.EN
+    val voice = VoiceCatalog.find(draft.voiceType)
+    val voiceLabel = AppSettings.voiceLabel(draft.voiceType, en, aliases)
+    val voiceSummary = listOfNotNull(
+        voiceLabel,
+        voice?.let { s.voiceLanguage(it.languages) },
+        voice?.let { if (en) it.descriptionEn else it.descriptionZh }
+    ).joinToString(" · ")
+    val spoken = draft.spokenText()
+    val charCount = SpeechLimits.charCount(spoken)
+    val textWithinLimit = SpeechLimits.isWithinLimit(spoken)
+    val textLanguage = remember(spoken) { TextLanguageDetector.detect(spoken) }
+    val voiceMismatch = speechConfig.enabled && speechConfig.configured &&
+        voice != null && !voice.supports(textLanguage)
     var showDeleteConfirm by remember { mutableStateOf(false) }
     var showAppPicker by remember { mutableStateOf(false) }
     var showVoicePicker by remember { mutableStateOf(false) }
@@ -193,7 +212,8 @@ fun EditorScreen(
                 }
 
                 // 刚进页面还没动手时不报错，等用户真的填了一部分再提示
-                val started = draft.hour != null || draft.content.isNotBlank()
+                val started = draft.hour != null || draft.content.isNotBlank() ||
+                    draft.speechText.isNotBlank()
                 if (problems.isNotEmpty() && started) {
                     Spacer(Modifier.height(12.dp))
                     Surface(
@@ -377,8 +397,31 @@ fun EditorScreen(
                                 cursorColor = MaterialTheme.colorScheme.primary
                             ),
                             minLines = 1,
-                            maxLines = 3
+                            maxLines = 6
                         )
+                        Spacer(Modifier.height(6.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.End
+                        ) {
+                            Text(
+                                text = s.speechTextCount(charCount, SpeechLimits.MAX_TEXT_CHARS),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = if (textWithinLimit) {
+                                    MaterialTheme.colorScheme.onSurfaceVariant
+                                } else {
+                                    MaterialTheme.colorScheme.error
+                                }
+                            )
+                        }
+                        if (!textWithinLimit) {
+                            Text(
+                                text = s.speechTextLimitHint(SpeechLimits.MAX_TEXT_CHARS),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.error,
+                                modifier = Modifier.padding(top = 4.dp)
+                            )
+                        }
                         Spacer(Modifier.height(12.dp))
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             // 没填密钥时不是"没语音"，而是交给系统语音念——别让用户以为不会出声
@@ -389,7 +432,9 @@ fun EditorScreen(
                                 } else when (audioState) {
                                     AudioState.READY -> s.speechStateReady
                                     AudioState.PENDING -> s.speechStatePending
-                                    AudioState.FAILED -> s.speechStateFailed
+                                    AudioState.FAILED -> audioError?.let {
+                                        "${s.speechStateFailed}：${s.speechError(it)}"
+                                    } ?: s.speechStateFailed
                                     AudioState.NONE -> s.speechStateNone
                                 },
                                 style = MaterialTheme.typography.bodySmall,
@@ -402,7 +447,10 @@ fun EditorScreen(
                                     .weight(1f)
                                     .padding(end = 14.dp)
                             )
-                            ActionPill(if (previewing) s.speechTesting else s.speechPreview) {
+                            ActionPill(
+                                text = if (previewing) s.speechTesting else s.speechPreview,
+                                enabled = !previewing && textWithinLimit
+                            ) {
                                 onPreview(
                                     draft.speechText.ifBlank { draft.content },
                                     draft.voiceType,
@@ -437,10 +485,18 @@ fun EditorScreen(
                     DwDivider()
                     DwRow(
                         title = s.voiceTitle,
-                        subtitle = VoiceCatalog.labelOf(draft.voiceType, s.lang == Lang.EN),
+                        subtitle = voiceSummary.takeIf { it.isNotBlank() },
                         onClick = { showVoicePicker = true }
                     ) {
                         ActionPill(s.select) { showVoicePicker = true }
+                    }
+                    if (voiceMismatch) {
+                        Text(
+                            text = s.voiceLanguageMismatch,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error,
+                            modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 12.dp)
+                        )
                     }
 
                     // 语气也跟这条提醒走：上班打卡要催着点，下班打卡轻一点更好

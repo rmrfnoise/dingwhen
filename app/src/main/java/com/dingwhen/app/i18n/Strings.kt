@@ -2,6 +2,8 @@ package com.dingwhen.app.i18n
 
 import com.dingwhen.app.model.DraftProblem
 import com.dingwhen.app.model.RepeatType
+import com.dingwhen.app.speech.SpeechLimits
+import com.dingwhen.app.speech.VoiceLanguage
 import java.time.DayOfWeek
 import java.time.LocalDate
 import java.util.Locale
@@ -161,6 +163,15 @@ interface Strings {
     val voicePickerTitle: String
     val voicePickerHint: String
     val voiceScopeNote: String
+    /** 中英 / 中文 / 英文，用于选择器徽标和音色行副标题 */
+    fun voiceLanguage(languages: Set<VoiceLanguage>): String
+    val voiceRename: String
+    val voiceRenameTitle: String
+    fun voiceRenameHint(max: Int): String
+    val voiceRenameReset: String
+    val voiceRenameSave: String
+    /** 当前音色与朗读文字的语言不匹配时的提示 */
+    val voiceLanguageMismatch: String
     val speechEmotionTitle: String
     /** 设置页语气开关：和音色对称，只决定新建时预填什么 */
     val defaultEmotionTitle: String
@@ -194,6 +205,8 @@ interface Strings {
     fun speechVolumeValue(current: Int, max: Int): String
     fun speechTimesValue(times: Int): String
     fun speechRegenDone(count: Int): String
+    fun speechTextCount(count: Int, max: Int): String
+    fun speechTextLimitHint(max: Int): String
     fun speechError(reason: String): String
 
     /* ------------------------------------------------------------ 通知 */
@@ -309,6 +322,7 @@ object Zh : Strings {
         DraftProblem.CONTENT -> "还没写内容"
         DraftProblem.WEEKLY_DAYS -> "还没选星期几"
         DraftProblem.MONTHLY_DAY -> "还没选几号"
+        DraftProblem.TEXT_TOO_LONG -> "播报文字超过 ${SpeechLimits.MAX_TEXT_CHARS} 字"
     }
 
     override fun joinProblems(items: List<String>) = items.joinToString("、")
@@ -361,8 +375,22 @@ object Zh : Strings {
     override val voiceTitle = "音色"
     override val defaultVoiceTitle = "新提醒的默认音色"
     override val voicePickerTitle = "选择音色"
-    override val voicePickerHint = "点一下换声音"
+    override val voicePickerHint = "点一下换声音，右侧铅笔可改名"
     override val voiceScopeNote = "只影响以后新建的提醒；已有提醒在各自的编辑页里改。"
+    override val voiceRename = "重命名音色"
+    override val voiceRenameTitle = "重命名音色"
+    override val voiceRenameReset = "恢复默认名称"
+    override val voiceRenameSave = "保存"
+    override val voiceLanguageMismatch = "当前音色不支持这段文字的语言，换一个音色试试。"
+
+    override fun voiceLanguage(languages: Set<VoiceLanguage>) = when {
+        languages.containsAll(setOf(VoiceLanguage.ZH, VoiceLanguage.EN)) -> "中英"
+        VoiceLanguage.ZH in languages -> "中文"
+        VoiceLanguage.EN in languages -> "英文"
+        else -> ""
+    }
+
+    override fun voiceRenameHint(max: Int) = "留空恢复默认名称，最多 $max 字"
     override val speechEmotionTitle = "语气"
     override val defaultEmotionTitle = "新提醒的默认语气"
     override val speechEmotionSub = "用一句话描述想要的感觉"
@@ -395,15 +423,18 @@ object Zh : Strings {
     override fun speechVolumeValue(current: Int, max: Int) = "$current / $max"
     override fun speechTimesValue(times: Int) = "$times 遍"
     override fun speechRegenDone(count: Int) = if (count == 0) "都已完成" else "已排队 $count 条"
+    override fun speechTextCount(count: Int, max: Int) = "$count / $max 字"
+    override fun speechTextLimitHint(max: Int) = "最多 $max 字，超出请缩短或拆成多条提醒。"
 
     override fun speechError(reason: String): String = when (reason) {
         "not_configured" -> "未填 API KEY"
         "empty_text" -> "播报内容是空的"
-        "text_too_long" -> "文字太长，单次最多约 300 字"
+        "text_too_long" -> "文字太长，单条最多 ${SpeechLimits.MAX_TEXT_CHARS} 字"
         "network" -> "网络不通或服务繁忙，稍后会自动重试"
         "auth" -> "密钥不对，检查 API KEY"
         "quota" -> "额度用完了，去控制台看看"
         "voice" -> "这个音色你的账号还没开通，换一个试试"
+        "unsupported_language" -> "这个音色不支持这段文字的语言，换一个试试"
         "bad_text" -> "这段文字合成不了，换个说法"
         "tts_failed" -> "系统语音没出声，手机可能没有语音引擎；到点用振动提醒"
         else -> "合成失败，换个音色或稍后再试"
@@ -528,6 +559,7 @@ object En : Strings {
         DraftProblem.CONTENT -> "Write what to remind you"
         DraftProblem.WEEKLY_DAYS -> "Pick at least one weekday"
         DraftProblem.MONTHLY_DAY -> "Pick a day of the month"
+        DraftProblem.TEXT_TOO_LONG -> "Spoken text is over ${SpeechLimits.MAX_TEXT_CHARS} characters"
     }
 
     override fun joinProblems(items: List<String>) = items.joinToString(", ")
@@ -582,9 +614,24 @@ object En : Strings {
     override val voiceTitle = "Voice"
     override val defaultVoiceTitle = "Default voice"
     override val voicePickerTitle = "Choose a voice"
-    override val voicePickerHint = "Tap to switch"
+    override val voicePickerHint = "Tap to switch; use the pencil to rename"
     override val voiceScopeNote =
         "Applies to new reminders only. Change an existing one in its editor."
+    override val voiceRename = "Rename voice"
+    override val voiceRenameTitle = "Rename voice"
+    override val voiceRenameReset = "Reset to default"
+    override val voiceRenameSave = "Save"
+    override val voiceLanguageMismatch =
+        "This voice doesn't support the text's language. Pick another voice."
+
+    override fun voiceLanguage(languages: Set<VoiceLanguage>) = when {
+        languages.containsAll(setOf(VoiceLanguage.ZH, VoiceLanguage.EN)) -> "ZH+EN"
+        VoiceLanguage.ZH in languages -> "Chinese"
+        VoiceLanguage.EN in languages -> "English"
+        else -> ""
+    }
+
+    override fun voiceRenameHint(max: Int) = "Leave empty to reset; up to $max characters"
     override val speechEmotionTitle = "Tone"
     override val defaultEmotionTitle = "Default tone"
     override val speechEmotionSub = "Describe the tone in plain words"
@@ -618,15 +665,19 @@ object En : Strings {
     override fun speechTimesValue(times: Int) = if (times == 1) "Once" else "$times times"
     override fun speechRegenDone(count: Int) =
         if (count == 0) "Everything is ready" else "Queued $count"
+    override fun speechTextCount(count: Int, max: Int) = "$count / $max"
+    override fun speechTextLimitHint(max: Int) =
+        "Up to $max characters; shorten it or split into multiple reminders."
 
     override fun speechError(reason: String): String = when (reason) {
         "not_configured" -> "No API KEY yet"
         "empty_text" -> "Nothing to read"
-        "text_too_long" -> "Text too long, about 300 characters max"
+        "text_too_long" -> "Text too long — ${SpeechLimits.MAX_TEXT_CHARS} characters max"
         "network" -> "Network or service busy — will retry later"
         "auth" -> "Bad API KEY — check it again"
         "quota" -> "Quota used up — check the console"
         "voice" -> "This voice isn't enabled for your account — try another one"
+        "unsupported_language" -> "This voice doesn't support the text's language — try another one"
         "bad_text" -> "This text cannot be synthesized"
         "tts_failed" -> "The system voice stayed silent — no TTS engine on this phone? Vibration will still fire"
         else -> "Synthesis failed — try another voice or later"

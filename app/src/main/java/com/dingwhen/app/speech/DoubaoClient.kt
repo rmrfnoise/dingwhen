@@ -26,9 +26,6 @@ object DoubaoClient {
 
     private const val ENDPOINT = "https://openspeech.bytedance.com/api/v3/tts/unidirectional"
 
-    /** 服务端限制较宽，这里按提醒文本的实际长度设一个保守上限 */
-    private const val MAX_TEXT_BYTES = 1024
-
     /** 会话正常结束的状态码 */
     private const val DONE = 20_000_000
 
@@ -39,6 +36,7 @@ object DoubaoClient {
     const val ERR_AUTH = "auth"
     const val ERR_QUOTA = "quota"
     const val ERR_VOICE = "voice"
+    const val ERR_LANGUAGE = "unsupported_language"
     const val ERR_TEXT = "bad_text"
     const val ERR_OTHER = "other"
 
@@ -46,8 +44,12 @@ object DoubaoClient {
         if (!config.configured) return SynthResult.Err(ERR_NOT_CONFIGURED, "")
         val trimmed = text.trim()
         if (trimmed.isEmpty()) return SynthResult.Err(ERR_EMPTY, "")
-        if (trimmed.toByteArray(Charsets.UTF_8).size > MAX_TEXT_BYTES) {
-            return SynthResult.Err(ERR_TOO_LONG, "${trimmed.toByteArray(Charsets.UTF_8).size}")
+        if (!SpeechLimits.isWithinLimit(trimmed)) {
+            return SynthResult.Err(
+                ERR_TOO_LONG,
+                "${SpeechLimits.charCount(trimmed)}/${SpeechLimits.MAX_TEXT_CHARS} chars, " +
+                    "${SpeechLimits.byteCount(trimmed)}/${SpeechLimits.MAX_TEXT_BYTES} bytes"
+            )
         }
 
         val payload = buildBody(config, trimmed)
@@ -56,7 +58,8 @@ object DoubaoClient {
             conn = (URL(ENDPOINT).openConnection() as HttpURLConnection).apply {
                 requestMethod = "POST"
                 connectTimeout = 10_000
-                readTimeout = 30_000
+                // 单条 300 字以内；给服务端留足合成时间，避免长一点的提醒读超时
+                readTimeout = 60_000
                 doOutput = true
                 setRequestProperty("Content-Type", "application/json")
                 setRequestProperty("X-Api-Key", config.apiKey)
@@ -209,6 +212,10 @@ object DoubaoClient {
         val lower = message.lowercase()
         return when {
             code == 40402003 -> ERR_TOO_LONG
+            // 纯语种不匹配在 SpeechSynthesizer 里已提前拦住；这里兜住混合文本
+            lower.contains("language") || lower.contains("unsupported language") -> ERR_LANGUAGE
+            // 可读文本比例过低 / 没有可读文本，通常是符号过多或音色读不了这段文字
+            code == 40402002 || code == 45002001 -> ERR_TEXT
             code == 45000000 -> ERR_VOICE
             code == 401 || code == 403 -> ERR_AUTH
             // 服务端偶发错误与并发限流都属于"过一会儿再试可能就好了"

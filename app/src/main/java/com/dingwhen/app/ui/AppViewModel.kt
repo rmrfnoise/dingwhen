@@ -10,6 +10,7 @@ import com.dingwhen.app.model.Draft
 import com.dingwhen.app.model.NextTrigger
 import com.dingwhen.app.model.RepeatType
 import com.dingwhen.app.speech.DoubaoClient
+import com.dingwhen.app.speech.SpeechLimits
 import com.dingwhen.app.speech.SpeechPlayer
 import com.dingwhen.app.speech.VoiceCatalog
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -168,6 +169,10 @@ class AppViewModel : ViewModel() {
     ) {
         val target = text.ifBlank { _draft.value.content }.trim()
         if (target.isBlank() || _previewing.value) return
+        if (!SpeechLimits.isWithinLimit(target)) {
+            _previewNote.value = DoubaoClient.ERR_TOO_LONG
+            return
+        }
 
         viewModelScope.launch {
             _previewing.value = true

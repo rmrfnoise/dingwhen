@@ -7,6 +7,7 @@ import com.dingwhen.app.speech.VoiceCatalog
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import org.json.JSONObject
 
 /** 浅色 / 深色 / 跟随系统。默认跟随系统，用户选了之后以选择为准。 */
 enum class ThemeMode { SYSTEM, LIGHT, DARK }
@@ -28,6 +29,11 @@ object AppSettings {
     private const val KEY_SP_EMOTION_ON = "sp_emotion_on"
     private const val KEY_SP_TEST = "sp_test"
 
+    private const val KEY_VOICE_ALIASES = "voice_aliases"
+
+    /** 音色自定义名称的最大长度；按 Unicode 码点算，避免 emoji 被截成半个。 */
+    const val MAX_VOICE_NAME_CHARS = 24
+
     @Volatile
     private var prefs: SharedPreferences? = null
 
@@ -40,6 +46,16 @@ object AppSettings {
     /** 语音播报配置。密钥只落本地，公开仓库里不能出现。 */
     private val _speech = MutableStateFlow(SpeechConfig())
     val speech: StateFlow<SpeechConfig> = _speech.asStateFlow()
+
+    /**
+     * 音色别名：键是音色 ID，值是用户起的名字。
+     *
+     * 只影响显示，不进入 voiceType、不进缓存键；改名不会触发重新合成。
+     * 存在 SharedPreferences 而不是 Room：它是设备级显示偏好，不是提醒数据，
+     * 这样也不用为它升数据库版本、冒 fallbackToDestructiveMigration 清空提醒的风险。
+     */
+    private val _voiceAliases = MutableStateFlow<Map<String, String>>(emptyMap())
+    val voiceAliases: StateFlow<Map<String, String>> = _voiceAliases.asStateFlow()
 
     fun init(context: Context) {
         if (prefs != null) return
@@ -57,6 +73,7 @@ object AppSettings {
             testText = store.getString(KEY_SP_TEST, "").orEmpty(),
             enabled = store.getBoolean(KEY_SP_ENABLED, true)
         )
+        _voiceAliases.value = parseVoiceAliases(store.getString(KEY_VOICE_ALIASES, null))
     }
 
     fun setTheme(mode: ThemeMode) {
@@ -81,6 +98,64 @@ object AppSettings {
             ?.putBoolean(KEY_SP_EMOTION_ON, config.emotionEnabled)
             ?.putString(KEY_SP_TEST, config.testText)
             ?.apply()
+    }
+
+    /**
+     * 音色的显示名：别名优先，没有别名回落到当前语言的官方名称。
+     *
+     * Compose 里请把 [voiceAliases] collect 成 State 再传 aliases；
+     * 只调用本方法而不订阅 StateFlow 的话，改名不会触发重组。
+     */
+    fun voiceLabel(
+        id: String?,
+        en: Boolean,
+        aliases: Map<String, String> = _voiceAliases.value
+    ): String? {
+        if (id == null) return null
+        aliases[id]?.takeIf { it.isNotBlank() }?.let { return it }
+        return VoiceCatalog.labelOf(id, en)
+    }
+
+    /** 输入框用：按码点截断，避免粘贴超长名称时整个输入被拒绝。 */
+    fun limitVoiceName(name: String): String = name.takeCodePoints(MAX_VOICE_NAME_CHARS)
+
+    /** 空字符串 / 纯空白表示恢复默认名称。 */
+    fun setVoiceAlias(id: String, name: String?) {
+        val clean = name
+            ?.trim()
+            ?.replace(Regex("\\s+"), " ")
+            ?.takeCodePoints(MAX_VOICE_NAME_CHARS)
+            ?.takeIf { it.isNotBlank() }
+
+        val next = _voiceAliases.value.toMutableMap()
+        if (clean == null) next.remove(id) else next[id] = clean
+        if (next == _voiceAliases.value) return
+
+        _voiceAliases.value = next
+        val json = JSONObject()
+        next.forEach { (key, value) -> json.put(key, value) }
+        prefs?.edit()?.putString(KEY_VOICE_ALIASES, json.toString())?.apply()
+    }
+
+    private fun parseVoiceAliases(raw: String?): Map<String, String> {
+        if (raw.isNullOrBlank()) return emptyMap()
+        return runCatching {
+            val json = JSONObject(raw)
+            buildMap {
+                json.keys().forEach { key ->
+                    val value = json.optString(key).trim()
+                    if (value.isNotEmpty()) {
+                        put(key, value.takeCodePoints(MAX_VOICE_NAME_CHARS))
+                    }
+                }
+            }
+        }.getOrDefault(emptyMap())
+    }
+
+    private fun String.takeCodePoints(max: Int): String {
+        if (max <= 0) return ""
+        if (codePointCount(0, length) <= max) return this
+        return substring(0, offsetByCodePoints(0, max))
     }
 
     /** 通知等非 Compose 场景用它取当前语言。 */

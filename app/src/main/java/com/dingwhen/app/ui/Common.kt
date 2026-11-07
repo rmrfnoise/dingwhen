@@ -305,20 +305,26 @@ fun DwDivider(indent: Dp = 16.dp) {
 fun ActionPill(
     text: String,
     modifier: Modifier = Modifier,
+    enabled: Boolean = true,
     onClick: () -> Unit
 ) {
+    val contentColor = if (enabled) {
+        MaterialTheme.colorScheme.onSurface
+    } else {
+        MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.45f)
+    }
     Surface(
         shape = RoundedCornerShape(3.dp),
         color = Color.Transparent,
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)),
+        border = BorderStroke(1.dp, contentColor.copy(alpha = 0.4f)),
         modifier = modifier
             .clip(RoundedCornerShape(3.dp))
-            .clickable(onClick = onClick)
+            .clickable(enabled = enabled, onClick = onClick)
     ) {
         Text(
             text = text,
             style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.onSurface,
+            color = contentColor,
             modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
         )
     }

@@ -87,6 +87,7 @@ fun AppRoot(vm: AppViewModel = viewModel()) {
         Route.EDITOR -> EditorScreen(
             draft = draft,
             audioState = reminders?.firstOrNull { it.id == draft.id }?.audioState ?: AudioState.NONE,
+            audioError = reminders?.firstOrNull { it.id == draft.id }?.audioError,
             previewing = previewing,
             previewNote = previewNote,
             onUpdate = vm::updateDraft,

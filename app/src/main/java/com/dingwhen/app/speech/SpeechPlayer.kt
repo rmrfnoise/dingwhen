@@ -5,6 +5,7 @@ import android.media.AudioAttributes
 import android.media.AudioManager
 import android.media.MediaPlayer
 import android.os.Build
+import android.os.SystemClock
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
@@ -30,7 +31,12 @@ object SpeechPlayer {
 
     suspend fun playFile(file: File, times: Int = 1): Boolean = withContext(Dispatchers.IO) {
         var played = false
+        val startedAt = SystemClock.elapsedRealtime()
         repeat(times) { index ->
+            // 长音频 × 多遍可能让前台服务待很久；超过总时长边界就停在当前这一轮
+            if (SystemClock.elapsedRealtime() - startedAt >= SpeechLimits.MAX_TOTAL_PLAYBACK_MS) {
+                return@withContext played
+            }
             val ok = playOnce(file)
             if (!ok) return@withContext played
             played = true
@@ -60,8 +66,9 @@ object SpeechPlayer {
                 prepare()
                 start()
             }
-            // 超时也算播过：文件坏了会让 await 一直挂着，不能把服务卡死
-            withTimeoutOrNull(20_000) { done.await() } ?: true
+            // 只防文件损坏导致 await 永远挂着；正常音频靠 OnCompletionListener 结束，
+            // 不能让 300 字的长提醒在 20 秒处被 release 掐断。
+            withTimeoutOrNull(SpeechLimits.MAX_PLAYBACK_MS) { done.await() } ?: true
         } catch (e: Exception) {
             false
         } finally {
@@ -79,16 +86,27 @@ object SpeechPlayer {
                 if (!ready.isCompleted) ready.complete(status == TextToSpeech.SUCCESS)
             }
             val initialized = withTimeoutOrNull(3_000) { ready.await() } ?: false
-            val tts = engine
-            if (!initialized || tts == null) {
-                runCatching { tts?.shutdown() }
+            val tts = engine ?: return@withContext false
+            if (!initialized) {
+                runCatching { tts.shutdown() }
                 return@withContext false
             }
 
             try {
-                val lang = tts.setLanguage(Locale.getDefault())
-                if (lang == TextToSpeech.LANG_MISSING_DATA || lang == TextToSpeech.LANG_NOT_SUPPORTED) {
-                    tts.setLanguage(Locale.CHINA)
+                // 英文提醒在中文系统上也要尽量用英文引擎，别用中文音色硬读
+                val textLanguage = TextLanguageDetector.detect(text)
+                val preferred = if (textLanguage == TextLanguage.EN) {
+                    Locale.US
+                } else {
+                    Locale.getDefault()
+                }
+                val languageResult = tts.setLanguage(preferred)
+                val missing = languageResult == TextToSpeech.LANG_MISSING_DATA ||
+                    languageResult == TextToSpeech.LANG_NOT_SUPPORTED
+                if (missing) {
+                    tts.setLanguage(
+                        if (textLanguage == TextLanguage.EN) Locale.ENGLISH else Locale.CHINA
+                    )
                 }
                 tts.setAudioAttributes(
                     AudioAttributes.Builder()
@@ -118,7 +136,10 @@ object SpeechPlayer {
                 if (queued != TextToSpeech.SUCCESS) {
                     false
                 } else {
-                    withTimeoutOrNull(15_000) { done.await() } ?: true
+                    // 按文字长度放宽，避免系统语音把稍长的提醒读一半就 shutdown
+                    val timeout = (text.length * 350L)
+                        .coerceIn(20_000L, SpeechLimits.MAX_PLAYBACK_MS)
+                    withTimeoutOrNull(timeout) { done.await() } ?: true
                 }
             } catch (e: Exception) {
                 false
